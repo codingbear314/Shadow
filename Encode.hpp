@@ -2,9 +2,9 @@
 
 /**
 * Shadow C++ / Encode.hpp
-* 
+*
 * Part of the Shadow C++ chess engine project.
-* 
+*
 * 2024, js314
 */
 
@@ -12,11 +12,15 @@
 #include <intrin.h>
 # include "chess.hpp"
 
-torch::Device device = torch::kCUDA;
-
 torch::Tensor encode_board(const chess::Board& board)
 {
-	torch::Tensor board_tensor = torch::zeros({8, 8, 6}, torch::kFloat32).to(device);
+	torch::Tensor board_tensor = torch::zeros({ 8, 8, 6 }, torch::kFloat32)
+		
+#ifdef SDW_USE_CUDA
+		.to(torch::kCUDA);
+#else
+		.to(torch::kCPU);
+#endif
 
 	uint64_t P = board.pieces(chess::PieceType::PAWN, chess::Color::WHITE).getBits();
 	uint64_t N = board.pieces(chess::PieceType::KNIGHT, chess::Color::WHITE).getBits();
@@ -151,7 +155,7 @@ int EncodeMove(const chess::Move& move)
 		return from_encoded + 63;
 
 	// The code shouldn't reach here.
-	std::cout << "Invalid move, "<<move<<std::endl;
+	std::cout << "Invalid move, " << move << std::endl;
 	assert(false);
 }
 
@@ -166,7 +170,7 @@ chess::Move DecodeMove(const int move_int, const bool isPawnMove) {
 
 	int ToFile = from_square % 8;
 	int ToRank = from_square / 8;
-		
+
 	if (moveType < 14) { // Delta File = 0, Rook move
 		// (moveTyoe - 7) is -7 to 6, map 0~6 to 1~7
 		const int mappedDeltaRank = _SHDW_Sub_uns_to_del(moveType);
@@ -189,15 +193,15 @@ chess::Move DecodeMove(const int move_int, const bool isPawnMove) {
 	else if (moveType < 64) {
 		// Knight move
 		switch (moveType) {
-			case 56: ToFile += 2; ToRank += 1; break;
-			case 57: ToFile += 2; ToRank -= 1; break;
-			case 58: ToFile -= 2; ToRank += 1; break;
-			case 59: ToFile -= 2; ToRank -= 1; break;
-			case 60: ToFile += 1; ToRank += 2; break;
-			case 61: ToFile += 1; ToRank -= 2; break;
-			case 62: ToFile -= 1; ToRank += 2; break;
-			case 63: ToFile -= 1; ToRank -= 2; break;
-			default: assert(false);
+		case 56: ToFile += 2; ToRank += 1; break;
+		case 57: ToFile += 2; ToRank -= 1; break;
+		case 58: ToFile -= 2; ToRank += 1; break;
+		case 59: ToFile -= 2; ToRank -= 1; break;
+		case 60: ToFile += 1; ToRank += 2; break;
+		case 61: ToFile += 1; ToRank -= 2; break;
+		case 62: ToFile -= 1; ToRank += 2; break;
+		case 63: ToFile -= 1; ToRank -= 2; break;
+		default: assert(false);
 		}
 	}
 	else { // Underpromotion, 64 ~ 72
