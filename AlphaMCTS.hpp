@@ -128,7 +128,7 @@ public:
 		Config config
 	) :
 		input_tensor(input_tensor),
-		output_tensor(output_tensor),
+		output_tensor_policy(output_tensor),
 		parallel_counter(0),
 		config(config)
 	{}
@@ -142,12 +142,11 @@ public:
 		// Check if the game is over
 		float value = 0;
 		auto over = root->state.isGameOver();
-		if (over.second == chess::GameResult::DRAW) value = 0;
-		else if (over.second == chess::GameResult::WIN) value = -1;
-		else if (over.second == chess::GameResult::LOSE) value = 1;
+		if (over.second == chess::GameResult::DRAW) { value = 0; this->parallel_counter += 1; }
+		else if (over.second == chess::GameResult::WIN) { value = -1; this->parallel_counter += 1; }
+		else if (over.second == chess::GameResult::LOSE) { value = 1; this->parallel_counter += 1; }
 
 		else {
-			this->ModelDone = false;
 			this->inputWrite.lock();
 			int pointer = this->parallel_counter;
 			this->input_tensor[parallel_counter][0] = encode_board(root->state);
@@ -157,14 +156,82 @@ public:
 			this->inputWrite.lock();
 			torch::Tensor policy = this->output_tensor_policy[pointer];
 			float value = this->output_tensor_value[pointer].item<float>();
-
 			this->inputWrite.unlock();
 
+			root->expand(policy);
 		}
+
+		root->backpropagate(value);
+
+		// End this thread
+		return;
 	}
 
-	void iteration() {
+	void iteration(std::shared_ptr<Shadow_Chess_V1_Resnet>& model) {
 		// Start the threads
+		for (int i = 0; i < 8; i++) {
+			threads.push_back(std::thread(&ParallelAlphaMCTS::threaded_iteration, this, roots[i]));
+		}
 
+		this->parallel_counter = 0;
+		this->ModelDone = false;
+
+		// Wait until all threads are requesting the model
+		while (this->parallel_counter < 8) {}
+
+		// Run the model
+		std::pair<torch::Tensor, torch::Tensor> output = model->forward(input_tensor);
+		this->output_tensor_policy = output.first;
+		this->output_tensor_value = output.second;
+
+		this->ModelDone = true;
+
+		// Wait until all threads are done
+		for (int i = 0; i < 8; i++) {
+			threads[i].join();
+		}
+
+		// End the iteration
+		return;
+	}
+
+	void search(std::shared_ptr<Shadow_Chess_V1_Resnet>& model, chess::Board start_state) {
+		model->eval();
+		// Start with completely random 8 moves
+		chess::Movelist mvl;
+		chess::movegen::legalmoves(mvl, start_state);
+
+		for (int i = 0; i < 8; i++) {
+			chess::Move move = mvl[rand()%(mvl.size())];
+			chess::Board new_state = start_state;
+			new_state.makeMove(move);
+			new_state.mirrorBoard();
+			int int_action = EncodeMove(move);
+			Node* root = new Node(this->config, new_state, NULL, int_action);
+			roots[i] = root;
+		}
+
+		// Start the iterations
+		for (int i = 0; i < 100; i++) {
+			iteration(model);
+		}
+
+		// End the search
+		torch::Tensor action_probs = torch::zeros({ 8, 4672 }, torch::kFloat32
+		
+#ifdef SDW_USE_CUDA
+			).to(torch::kCUDA);
+#else
+			).to(torch::kCPU);
+#endif
+
+
+		for (int game = 0; game < 8; game++) {
+			for (auto child : roots[game]->children) {
+				action_probs[game][child->parent_action] = child->visit_count;
+			}
+			action_probs /= action_probs.sum();
+		}
+		return action_probs;
 	}
 };
