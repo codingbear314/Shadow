@@ -41,7 +41,7 @@ public:
 		value_sum(0) 
 	{}
 
-	bool is_expanded() {
+	bool is_expanded() const {
 		return children.size() > 0;
 	}
 
@@ -57,9 +57,37 @@ public:
 				selected = child;
 			}
 		}
+
+		return;
 	}
 
-	float get_ucb(Node* child) {
+	void expand(torch::Tensor policy) { // Shape : [1, 4672]
+		chess::Movelist mvl;
+		chess::movegen::legalmoves(mvl, state);
+		for (int i = 0; i < mvl.size(); i++) {
+			chess::Move move = mvl[i];
+			chess::Board new_state = state;
+			new_state.makeMove(move);
+			new_state.mirrorBoard();
+			int int_action = EncodeMove(move);
+			auto poli = policy[0][int_action].item<float>();
+			if (poli <= 0)
+				continue;
+			Node* child = new Node(this->config, new_state, this, int_action, poli);
+			children.push_back(child);
+		}
+	}
+
+	void backpropagate(float value) {
+		this->visit_count += 1;
+		this->value_sum += value;
+		value = -value;
+		if (this->parent) {
+			this->parent->backpropagate(value);
+		}
+	}
+
+	float get_ucb(const Node* child) const {
 		float q_value = 0;
 		if (child->visit_count) {
 			q_value = ((child->value_sum / child->visit_count) + 1.0)/(float(2));
@@ -69,4 +97,9 @@ public:
 			(sqrt(this->visit_count) / (1 + child->visit_count)) *
 			child->prior;
 	}
+};
+
+class AlphaMCTS {
+public:
+	std::shared_ptr<Shadow_Chess_V1_Resnet> model;
 };
