@@ -99,7 +99,72 @@ public:
 	}
 };
 
-class AlphaMCTS {
+// Alpha MCTS, done with multithreading
+class ParallelAlphaMCTS {
 public:
-	std::shared_ptr<Shadow_Chess_V1_Resnet> model;
+	// Logic :
+	/*
+	* We make a input tensor with (parallel games, 1, 8, 8, 6) by multithreading.
+	* The main thread looks out for when the parallel counter is done.
+	* Then, we run the model on the input tensor.
+	* We save the output tensor as a variable, and make the atomic counter 0 again.
+	* Then, on the threads, they go on with the logic
+	*/
+
+	torch::Tensor input_tensor;
+	torch::Tensor output_tensor_policy;
+	torch::Tensor output_tensor_value;
+	std::atomic<int> parallel_counter;
+	std::atomic<int> ongoing_games;
+	std::atomic<bool> ModelDone;
+	std::vector<std::thread> threads;
+	Node* roots[8];
+	std::mutex inputWrite;
+	Config config;
+
+	ParallelAlphaMCTS(
+		torch::Tensor input_tensor,
+		torch::Tensor output_tensor,
+		Config config
+	) :
+		input_tensor(input_tensor),
+		output_tensor(output_tensor),
+		parallel_counter(0),
+		config(config)
+	{}
+
+	void threaded_iteration(Node *root) {
+		// Not the first, so no need for dirichlet noise
+		while (root->is_expanded()) {
+			root->select_leaf(root);
+		}
+
+		// Check if the game is over
+		float value = 0;
+		auto over = root->state.isGameOver();
+		if (over.second == chess::GameResult::DRAW) value = 0;
+		else if (over.second == chess::GameResult::WIN) value = -1;
+		else if (over.second == chess::GameResult::LOSE) value = 1;
+
+		else {
+			this->ModelDone = false;
+			this->inputWrite.lock();
+			int pointer = this->parallel_counter;
+			this->input_tensor[parallel_counter][0] = encode_board(root->state);
+			this->parallel_counter += 1;
+			this->inputWrite.unlock();
+			while (this->ModelDone == false) {}
+			this->inputWrite.lock();
+			torch::Tensor policy = this->output_tensor_policy[pointer];
+			float value = this->output_tensor_value[pointer].item<float>();
+
+			this->inputWrite.unlock();
+
+		}
+	}
+
+	void iteration() {
+		// Start the threads
+
+	}
 };
